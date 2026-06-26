@@ -197,7 +197,10 @@ impl<M: From<Message> + Send + 'static> Common<M> {
 
     pub fn update_user_data(&mut self, user_data: &UserData) {
         self.update_wallpapers(user_data);
+        self.refresh_active_layouts(user_data);
+    }
 
+    pub fn refresh_active_layouts(&mut self, user_data: &UserData) {
         // From cosmic-applet-input-sources
         if let Some(keyboard_layouts) = &self.layouts_opt
             && let Some(xkb_config) = &user_data.xkb_config_opt

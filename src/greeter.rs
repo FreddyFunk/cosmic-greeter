@@ -419,6 +419,10 @@ pub struct App {
 
     accessibility: Accessibility,
     authenticating: bool,
+    /// `data_idx` of the user whose stored settings were last applied. Lets a
+    /// same-user `update_user_data` (e.g. the reconnect after a failed login)
+    /// skip re-applying and clobbering a layout picked in the greeter.
+    loaded_user: Option<usize>,
 }
 
 #[derive(Default)]
@@ -1038,17 +1042,13 @@ impl App {
             }
         };
 
-        self.common.update_user_data(user_data);
-
-        // Ensure that user's xkb config is used
-        self.common.set_xkb_config(user_data);
-
-        if let Some(builder) = &user_data.theme_builder_opt {
-            self.theme_builder = builder.clone();
-        }
-
         let mut tasks = Vec::new();
-        self.accessibility.magnifier = user_data.accessibility_zoom.start_on_login;
+
+        // Incremental: only fills surfaces lacking an image, so it is a no-op
+        // on a same-user reconnect but still wallpapers a newly added monitor.
+        self.common.update_wallpapers(user_data);
+
+        // User-independent; a new output may have appeared, so always re-list.
         self.randr_list = None;
         tasks.push(cosmic::Task::future(async {
             let randr_fut = cosmic_randr_shell::list().await;
@@ -1056,6 +1056,24 @@ impl App {
                 randr: Arc::new(randr_fut),
             })
         }));
+
+        // Re-apply stored settings only when the selected user changed. This
+        // method also runs on the reconnect after a failed login; re-applying
+        // there would discard a layout picked in the greeter mid-login.
+        let selected_user = self.selected_username.data_idx;
+        if self.loaded_user == selected_user {
+            return Task::batch(tasks);
+        }
+        self.loaded_user = selected_user;
+
+        self.common.refresh_active_layouts(user_data);
+        self.common.set_xkb_config(user_data);
+
+        if let Some(builder) = &user_data.theme_builder_opt {
+            self.theme_builder = builder.clone();
+        }
+
+        self.accessibility.magnifier = user_data.accessibility_zoom.start_on_login;
         if let Some(theme) = &user_data.theme_opt {
             self.accessibility.high_contrast = theme.is_high_contrast;
             tasks.push(cosmic::command::set_theme(cosmic::Theme::custom(Arc::new(
@@ -1163,6 +1181,7 @@ impl cosmic::Application for App {
             randr_list: None,
             surface_id_pairs: Vec::new(),
             authenticating: false,
+            loaded_user: None,
         };
         (app, Task::batch(tasks))
     }
